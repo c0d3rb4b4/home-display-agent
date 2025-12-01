@@ -1,0 +1,63 @@
+services:
+  home-display-agent:
+    build: .
+    container_name: home-display-agent
+    restart: unless-stopped
+    environment:
+      - RABBITMQ_HOST=rabbitmq
+      - RABBITMQ_PORT=5672
+      - RABBITMQ_USER=guest
+      - RABBITMQ_PASSWORD=guest
+      - SAMBA_HOST=samba
+      - SAMBA_SHARE=media
+      - LOG_LEVEL=INFO
+      - AUDIO_ID_URL=http://audio-id:8000
+      - IMAGE_OPT_URL=http://image-opt:8000
+      - OVERLAY_URL=http://overlay:8000
+      - DISPATCHER_URL=http://dispatcher:8000
+      - MONITOR_URL=http://monitor:8000
+    depends_on:
+      - rabbitmq
+      - samba
+    networks:
+      - home-display-network
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    container_name: rabbitmq
+    restart: unless-stopped
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    environment:
+      - RABBITMQ_DEFAULT_USER=guest
+      - RABBITMQ_DEFAULT_PASS=guest
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - home-display-network
+
+  samba:
+    image: dperson/samba
+    container_name: samba
+    restart: unless-stopped
+    ports:
+      - "139:139"
+      - "445:445"
+    environment:
+      - TZ=UTC
+    command: >
+      -s "media;/media;yes;no;yes;guest"
+      -u "guest;guest"
+    volumes:
+      - samba_data:/media
+    networks:
+      - home-display-network
+
+networks:
+  home-display-network:
+    driver: bridge
+
+volumes:
+  rabbitmq_data:
+  samba_data:
