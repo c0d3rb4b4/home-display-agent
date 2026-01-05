@@ -11,11 +11,6 @@ import httpx
 
 from src.config import load_config, Config
 
-# Set up logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger("home-display-agent")
 
 
@@ -502,11 +497,21 @@ async def _execute_tool(name: str, arguments: dict, config: Config) -> dict[str,
 async def main() -> None:
     """Run the MCP server."""
     config = load_config()
+    
+    # Setup logging from config
+    log_level = getattr(logging, config.log_level.upper(), logging.INFO)
+    logging.basicConfig(
+        level=log_level,
+        format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        handlers=[logging.StreamHandler()],
+    )
+    # Update existing logger
+    logger.setLevel(log_level)
+    
     logger.info("Starting home-display-agent MCP server: log_level=%s", config.log_level)
     logger.info("Service URLs: audio_id=%s, image_opt=%s, overlay=%s, dispatcher=%s, monitor=%s",
                config.services.audio_id_url, config.services.image_opt_url, config.services.overlay_url,
                config.services.dispatcher_url, config.services.monitor_url)
-    logging.getLogger().setLevel(config.log_level)
 
     server = create_server(config)
     logger.debug("MCP server created and configured")
