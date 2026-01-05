@@ -287,20 +287,23 @@ def create_server(config: Config) -> Server:
     @server.call_tool()
     async def call_tool(name: str, arguments: dict) -> list[TextContent]:
         """Handle tool calls."""
+        logger.info("Tool invoked: name=%s, arguments=%s", name, arguments)
         try:
             result = await _execute_tool(name, arguments, config)
+            logger.debug("Tool execution successful: name=%s, result_keys=%s", name, list(result.keys()) if isinstance(result, dict) else type(result).__name__)
             return [TextContent(type="text", text=str(result))]
         except httpx.HTTPStatusError as e:
             error_msg = f"HTTP error: {e.response.status_code} - {e.response.text}"
-            logger.error(error_msg)
+            logger.error("HTTP error during tool execution: tool=%s, status=%d, url=%s, response=%s",
+                        name, e.response.status_code, e.request.url, e.response.text)
             return [TextContent(type="text", text=error_msg)]
         except httpx.RequestError as e:
             error_msg = f"Request error: {str(e)}"
-            logger.error(error_msg)
+            logger.error("Network error during tool execution: tool=%s, error=%s", name, str(e), exc_info=True)
             return [TextContent(type="text", text=error_msg)]
         except Exception as e:
             error_msg = f"Error executing tool {name}: {str(e)}"
-            logger.error(error_msg)
+            logger.error("Unexpected error during tool execution: tool=%s, error=%s", name, str(e), exc_info=True)
             return [TextContent(type="text", text=error_msg)]
 
     return server
@@ -311,22 +314,27 @@ async def _execute_tool(name: str, arguments: dict, config: Config) -> dict[str,
     async with httpx.AsyncClient(timeout=60.0) as client:
         # Audio ID tools
         if name == "audio_identify":
-            response = await client.post(
-                f"{config.services.audio_id_url}/identify",
-                json={
-                    "source": arguments["source"],
-                    "duration": arguments.get("duration", 10),
-                },
-            )
+            url = f"{config.services.audio_id_url}/identify"
+            payload = {
+                "source": arguments["source"],
+                "duration": arguments.get("duration", 10),
+            }
+            logger.info("Requesting audio identification: url=%s, source=%s, duration=%d",
+                       url, arguments["source"], payload["duration"])
+            response = await client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info("Audio identification complete: source=%s, status=%d", arguments["source"], response.status_code)
+            return result
 
         elif name == "audio_status":
-            response = await client.get(
-                f"{config.services.audio_id_url}/status/{arguments['job_id']}",
-            )
+            url = f"{config.services.audio_id_url}/status/{arguments['job_id']}"
+            logger.debug("Checking audio identification status: url=%s, job_id=%s", url, arguments['job_id'])
+            response = await client.get(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Audio status retrieved: job_id=%s, status=%d", arguments['job_id'], response.status_code)
+            return result
 
         # Image optimization tools
         elif name == "image_optimize":
@@ -339,52 +347,65 @@ async def _execute_tool(name: str, arguments: dict, config: Config) -> dict[str,
                 payload["width"] = arguments["width"]
             if "height" in arguments:
                 payload["height"] = arguments["height"]
-            response = await client.post(
-                f"{config.services.image_opt_url}/optimize",
-                json=payload,
-            )
+            url = f"{config.services.image_opt_url}/optimize"
+            logger.info("Requesting image optimization: url=%s, source=%s, format=%s, quality=%d, dimensions=%sx%s",
+                       url, arguments["source"], payload["format"], payload["quality"],
+                       payload.get("width", "auto"), payload.get("height", "auto"))
+            response = await client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info("Image optimization complete: source=%s, status=%d", arguments["source"], response.status_code)
+            return result
 
         elif name == "image_info":
-            response = await client.post(
-                f"{config.services.image_opt_url}/info",
-                json={"source": arguments["source"]},
-            )
+            url = f"{config.services.image_opt_url}/info"
+            logger.debug("Requesting image info: url=%s, source=%s", url, arguments["source"])
+            response = await client.post(url, json={"source": arguments["source"]})
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Image info retrieved: source=%s, status=%d", arguments["source"], response.status_code)
+            return result
 
         # Overlay tools
         elif name == "overlay_create":
-            response = await client.post(
-                f"{config.services.overlay_url}/create",
-                json={
-                    "template": arguments["template"],
-                    "data": arguments["data"],
-                    "width": arguments.get("width", 1920),
-                    "height": arguments.get("height", 1080),
-                },
-            )
+            payload = {
+                "template": arguments["template"],
+                "data": arguments["data"],
+                "width": arguments.get("width", 1920),
+                "height": arguments.get("height", 1080),
+            }
+            url = f"{config.services.overlay_url}/create"
+            logger.info("Requesting overlay creation: url=%s, template=%s, dimensions=%dx%d, data_keys=%s",
+                       url, arguments["template"], payload["width"], payload["height"],
+                       list(arguments["data"].keys()) if isinstance(arguments["data"], dict) else "unknown")
+            response = await client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info("Overlay creation complete: template=%s, status=%d", arguments["template"], response.status_code)
+            return result
 
         elif name == "overlay_list_templates":
-            response = await client.get(
-                f"{config.services.overlay_url}/templates",
-            )
+            url = f"{config.services.overlay_url}/templates"
+            logger.debug("Requesting overlay templates list: url=%s", url)
+            response = await client.get(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            template_count = len(result) if isinstance(result, list) else "unknown"
+            logger.debug("Overlay templates retrieved: count=%s, status=%d", template_count, response.status_code)
+            return result
 
         elif name == "overlay_preview":
-            response = await client.post(
-                f"{config.services.overlay_url}/preview",
-                json={
-                    "template": arguments["template"],
-                    "data": arguments["data"],
-                },
-            )
+            payload = {
+                "template": arguments["template"],
+                "data": arguments["data"],
+            }
+            url = f"{config.services.overlay_url}/preview"
+            logger.debug("Requesting overlay preview: url=%s, template=%s", url, arguments["template"])
+            response = await client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Overlay preview complete: template=%s, status=%d", arguments["template"], response.status_code)
+            return result
 
         # Dispatcher tools
         elif name == "dispatcher_enqueue":
@@ -395,67 +416,84 @@ async def _execute_tool(name: str, arguments: dict, config: Config) -> dict[str,
             }
             if "options" in arguments:
                 payload["options"] = arguments["options"]
-            response = await client.post(
-                f"{config.services.dispatcher_url}/enqueue",
-                json=payload,
-            )
+            url = f"{config.services.dispatcher_url}/enqueue"
+            logger.info("Enqueueing job: url=%s, job_type=%s, source=%s, priority=%d",
+                       url, payload["job_type"], payload["source"], payload["priority"])
+            response = await client.post(url, json=payload)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info("Job enqueued: job_type=%s, status=%d", payload["job_type"], response.status_code)
+            return result
 
         elif name == "dispatcher_queue_status":
-            response = await client.get(
-                f"{config.services.dispatcher_url}/queue/status",
-            )
+            url = f"{config.services.dispatcher_url}/queue/status"
+            logger.debug("Requesting queue status: url=%s", url)
+            response = await client.get(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Queue status retrieved: status=%d", response.status_code)
+            return result
 
         elif name == "dispatcher_job_status":
-            response = await client.get(
-                f"{config.services.dispatcher_url}/job/{arguments['job_id']}",
-            )
+            url = f"{config.services.dispatcher_url}/job/{arguments['job_id']}"
+            logger.debug("Checking job status: url=%s, job_id=%s", url, arguments['job_id'])
+            response = await client.get(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Job status retrieved: job_id=%s, status=%d", arguments['job_id'], response.status_code)
+            return result
 
         elif name == "dispatcher_cancel":
-            response = await client.delete(
-                f"{config.services.dispatcher_url}/job/{arguments['job_id']}",
-            )
+            url = f"{config.services.dispatcher_url}/job/{arguments['job_id']}"
+            logger.info("Cancelling job: url=%s, job_id=%s", url, arguments['job_id'])
+            response = await client.delete(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.info("Job cancelled: job_id=%s, status=%d", arguments['job_id'], response.status_code)
+            return result
 
         # Monitor tools
         elif name == "monitor_health":
-            response = await client.get(
-                f"{config.services.monitor_url}/health",
-            )
+            url = f"{config.services.monitor_url}/health"
+            logger.debug("Requesting system health: url=%s", url)
+            response = await client.get(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("System health retrieved: status=%d", response.status_code)
+            return result
 
         elif name == "monitor_stream_status":
-            response = await client.get(
-                f"{config.services.monitor_url}/stream/status",
-            )
+            url = f"{config.services.monitor_url}/stream/status"
+            logger.debug("Requesting stream status: url=%s", url)
+            response = await client.get(url)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Stream status retrieved: status=%d", response.status_code)
+            return result
 
         elif name == "monitor_failures":
             params = {"limit": arguments.get("limit", 10)}
             if "service" in arguments:
                 params["service"] = arguments["service"]
-            response = await client.get(
-                f"{config.services.monitor_url}/failures",
-                params=params,
-            )
+            url = f"{config.services.monitor_url}/failures"
+            logger.debug("Requesting failures: url=%s, limit=%d, service=%s",
+                        url, params["limit"], params.get("service", "all"))
+            response = await client.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            failure_count = len(result) if isinstance(result, list) else "unknown"
+            logger.debug("Failures retrieved: count=%s, status=%d", failure_count, response.status_code)
+            return result
 
         elif name == "monitor_metrics":
-            response = await client.get(
-                f"{config.services.monitor_url}/metrics",
-                params={"period": arguments.get("period", "1h")},
-            )
+            params = {"period": arguments.get("period", "1h")}
+            url = f"{config.services.monitor_url}/metrics"
+            logger.debug("Requesting metrics: url=%s, period=%s", url, params["period"])
+            response = await client.get(url, params=params)
             response.raise_for_status()
-            return response.json()
+            result = response.json()
+            logger.debug("Metrics retrieved: period=%s, status=%d", params["period"], response.status_code)
+            return result
 
         else:
             raise ValueError(f"Unknown tool: {name}")
@@ -464,12 +502,17 @@ async def _execute_tool(name: str, arguments: dict, config: Config) -> dict[str,
 async def main() -> None:
     """Run the MCP server."""
     config = load_config()
-    logger.info(f"Starting home-display-agent MCP server (log level: {config.log_level})")
+    logger.info("Starting home-display-agent MCP server: log_level=%s", config.log_level)
+    logger.info("Service URLs: audio_id=%s, image_opt=%s, overlay=%s, dispatcher=%s, monitor=%s",
+               config.services.audio_id_url, config.services.image_opt_url, config.services.overlay_url,
+               config.services.dispatcher_url, config.services.monitor_url)
     logging.getLogger().setLevel(config.log_level)
 
     server = create_server(config)
+    logger.debug("MCP server created and configured")
 
     async with stdio_server() as (read_stream, write_stream):
+        logger.info("Starting stdio server for MCP communication")
         await server.run(
             read_stream,
             write_stream,
